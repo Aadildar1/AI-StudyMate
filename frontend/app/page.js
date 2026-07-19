@@ -79,7 +79,7 @@ export default function Home() {
       const token = await getToken();
 
       const response = await fetch(
-        "http://127.0.0.1:8000/generate",
+        `${process.env.NEXT_PUBLIC_API_URL}/generate`,
         {
           method: "POST",
 
@@ -162,7 +162,7 @@ if (!response.ok) {
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/feedback",
+        `${process.env.NEXT_PUBLIC_API_URL}/feedback`,
         {
           method: "POST",
 
@@ -275,7 +275,7 @@ if (!response.ok) {
 
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/progress-analysis",
+       `${process.env.NEXT_PUBLIC_API_URL}/progress-analysis`,
         {
           method: "POST",
 
@@ -305,7 +305,7 @@ if (!response.ok) {
       setProgressAnalysis(data.analysis);
 
       const saveResponse = await fetch(
-        "http://127.0.0.1:8000/save-history",
+        `${process.env.NEXT_PUBLIC_API_URL}/save-history`,
         {
           method: "POST",
 
@@ -347,7 +347,7 @@ const handleChat = async () => {
 
   try {
     const response = await fetch(
-      "http://127.0.0.1:8000/chat",
+      `${process.env.NEXT_PUBLIC_API_URL}/chat`,
       {
         method: "POST",
         headers: {

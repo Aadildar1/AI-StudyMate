@@ -19,7 +19,7 @@ export default function LearningLibrary() {
   async function fetchLibrary() {
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/library"
+        `${process.env.NEXT_PUBLIC_API_URL}/library`
       );
 
       const data = await response.json();
