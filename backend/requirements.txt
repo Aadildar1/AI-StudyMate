@@ -3,6 +3,7 @@ uvicorn
 python-dotenv
 google-genai
 google-api-python-client
+clerk-backend-api
 python-jose[cryptography]
 httpx
 pydantic
