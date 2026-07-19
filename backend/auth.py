@@ -21,10 +21,11 @@ def get_current_user(request: Request):
     state = clerk.authenticate_request(
         request,
         AuthenticateRequestOptions(
-            authorized_parties=[
-                "http://localhost:3000"
-            ]
-        )
+    authorized_parties=[
+        "http://localhost:3000",
+        "https://ai-study-mate-xi.vercel.app"
+    ]
+)
     )
 
     if not state.is_signed_in:
