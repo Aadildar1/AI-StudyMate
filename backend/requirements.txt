@@ -2,8 +2,8 @@ fastapi
 uvicorn
 python-dotenv
 google-genai
-google-api-python-client
+google-generativeai
 clerk-backend-api
-python-jose[cryptography]
-httpx
-pydantic
+psycopg2-binary
+python-multipart
+requests

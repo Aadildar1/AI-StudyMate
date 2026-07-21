@@ -192,7 +192,7 @@ def chat_with_ai(request: ChatRequest):
     """
 
     response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="models/gemini-flash-latest",
     contents=prompt
 )
     

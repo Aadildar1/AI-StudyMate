@@ -66,7 +66,7 @@ def generate_progress_analysis(
 
     response = safe_generate_content(
     client,
-    "gemini-3-flash-preview",
+    "models/gemini-flash-latest",
     prompt
 )
     return response.text

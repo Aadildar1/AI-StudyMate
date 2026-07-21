@@ -100,12 +100,21 @@ def generate_feedback_and_weak_quiz(
 
     response = safe_generate_content(
         client,
-        "gemini-3-flash-preview",
+        "models/gemini-flash-latest",
         prompt
     )
 
     content_text = response.text.strip()
 
-    content = json.loads(content_text)
+    # Remove markdown code fences if present
+    content_text = content_text.replace("```json", "").replace("```", "").strip()
+
+    try:
+        content = json.loads(content_text)
+    except json.JSONDecodeError:
+        print("Invalid JSON returned by Gemini:")
+        print(content_text)
+        raise Exception("Gemini returned invalid JSON. Please try again.")
 
     return content
+

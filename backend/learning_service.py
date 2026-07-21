@@ -90,7 +90,7 @@ def generate_learning_content(topic):
 
     response = safe_generate_content(
         client,
-        "gemini-3-flash-preview",
+        "models/gemini-flash-latest",
         prompt
     )
 

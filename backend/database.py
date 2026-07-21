@@ -1,15 +1,17 @@
 import os
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
 import json
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv()
 
-DATABASE_NAME = os.path.join(
-    BASE_DIR,
-    "studymate.db"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 def normalize_topic(topic):
 
@@ -20,13 +22,13 @@ def normalize_topic(topic):
 
 def create_database():
 
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = get_connection()
 
     cursor = connection.cursor()
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS study_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
 
         user_id TEXT NOT NULL,
 
@@ -44,20 +46,27 @@ def create_database():
 
         studied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
-""")
+    """)
+
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS learning_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic TEXT UNIQUE NOT NULL,
-            summary TEXT NOT NULL,
-            quiz TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
+    CREATE TABLE IF NOT EXISTS learning_cache (
+        id SERIAL PRIMARY KEY,
+
+        topic TEXT UNIQUE NOT NULL,
+
+        summary TEXT NOT NULL,
+
+        quiz TEXT NOT NULL,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
     """)
 
     connection.commit()
 
+    cursor.close()
     connection.close()
+    print("✅ PostgreSQL tables ready.")
 
 
 def save_study_history(
@@ -70,22 +79,12 @@ def save_study_history(
     progress_analysis
 ):
 
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = get_connection()
 
     cursor = connection.cursor()
 
     cursor.execute("""
-            INSERT INTO study_history (
-                user_id,
-                topic,
-                original_score,
-                original_total,
-                practice_score,
-                practice_total,
-                progress_analysis
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
+        INSERT INTO study_history (
             user_id,
             topic,
             original_score,
@@ -93,85 +92,64 @@ def save_study_history(
             practice_score,
             practice_total,
             progress_analysis
-        ))
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (
+        user_id,
+        topic,
+        original_score,
+        original_total,
+        practice_score,
+        practice_total,
+        progress_analysis
+    ))
 
     connection.commit()
 
+    cursor.close()
     connection.close()
 
 
 def get_study_history(user_id):
 
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = get_connection()
 
-    connection.row_factory = sqlite3.Row
-
-    cursor = connection.cursor()
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
 
     cursor.execute("""
-    SELECT *
+        SELECT *
         FROM study_history
-
-        WHERE user_id = ?
-
+        WHERE user_id = %s
         ORDER BY studied_at DESC
-    """, ( 
-        user_id,
-    ))
+    """, (user_id,))
 
-    rows = cursor.fetchall()
+    history = cursor.fetchall()
 
-    history = [
-        dict(row)
-        for row in rows
-    ]
-
+    cursor.close()
     connection.close()
 
     return history
-
-
 def get_cached_learning_content(topic):
 
     normalized_topic = normalize_topic(topic)
 
-    print(
-        f"CACHE LOOKUP TOPIC: '{normalized_topic}'"
-    )
+    connection = get_connection()
 
-    print(
-        f"DATABASE PATH: {DATABASE_NAME}"
-    )
-
-    connection = sqlite3.connect(DATABASE_NAME)
-
-    connection.row_factory = sqlite3.Row
-
-    cursor = connection.cursor()
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
 
     cursor.execute("""
         SELECT summary, quiz
         FROM learning_cache
-        WHERE topic = ?
-    """, (
-        normalized_topic,
-    ))
+        WHERE topic = %s
+    """, (normalized_topic,))
 
     row = cursor.fetchone()
 
+    cursor.close()
     connection.close()
 
     if row is None:
-
-        print(
-            f"CACHE DATABASE RESULT: NOT FOUND"
-        )
-
         return None
-
-    print(
-        f"CACHE DATABASE RESULT: FOUND"
-    )
 
     return {
         "summary": row["summary"],
@@ -189,11 +167,7 @@ def save_learning_content_cache(
 
     quiz_json = json.dumps(quiz)
 
-    print(
-        f"SAVING CACHE TOPIC: '{normalized_topic}'"
-    )
-
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = get_connection()
 
     cursor = connection.cursor()
 
@@ -203,11 +177,11 @@ def save_learning_content_cache(
             summary,
             quiz
         )
-        VALUES (?, ?, ?)
-        ON CONFLICT(topic)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (topic)
         DO UPDATE SET
-            summary = excluded.summary,
-            quiz = excluded.quiz
+            summary = EXCLUDED.summary,
+            quiz = EXCLUDED.quiz
     """, (
         normalized_topic,
         summary,
@@ -216,18 +190,13 @@ def save_learning_content_cache(
 
     connection.commit()
 
+    cursor.close()
     connection.close()
-
-    print(
-        f"CACHE DATABASE SAVE COMPLETE"
-    )
 def get_learning_library():
 
-    connection = sqlite3.connect(DATABASE_NAME)
+    connection = get_connection()
 
-    connection.row_factory = sqlite3.Row
-
-    cursor = connection.cursor()
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
 
     cursor.execute("""
         SELECT
@@ -241,8 +210,9 @@ def get_learning_library():
         ORDER BY studied_at DESC
     """)
 
-    rows = cursor.fetchall()
-    print("Rows fetched:", rows)
+    library = cursor.fetchall()
+
+    cursor.close()
     connection.close()
-    
-    return [dict(row) for row in rows]
+
+    return library

@@ -48,7 +48,7 @@ def generate_feedback(topic, score, total, mistakes):
 
     response = safe_generate_content(
     client,
-    "gemini-3-flash-preview",
+    "models/gemini-flash-latest",
     prompt
 )
 
