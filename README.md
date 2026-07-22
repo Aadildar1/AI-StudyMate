@@ -31,11 +31,13 @@ The application also includes secure user authentication using Clerk so each use
 
 - 🔐 Secure authentication with Clerk
 - 🤖 AI-generated study notes using Gemini AI
-- 📝 Dynamic quizzes
-- 📊 Personalized AI performance analysis
+- 📝 AI-generated quizzes
+- 🎯 Personalized practice quizzes based on weak areas
+- 📊 AI-generated performance analysis
 - 💬 AI Tutor chatbot
-- 📚 Study history and personal library
-- 📈 Learning progress tracking
+- 📚 Personal learning library
+- 📈 Learning history and progress tracking
+- 🗄️ PostgreSQL database hosted on Supabase
 - 🎨 Responsive modern UI built with Next.js
 - ⚡ FastAPI backend
 - ☁️ Deployed on Vercel & Render
@@ -61,13 +63,18 @@ The application also includes secure user authentication using Clerk so each use
 
 ## Database
 
-- SQLite
+- PostgreSQL (Supabase)
 
 ## Deployment
 
 - Vercel (Frontend)
 - Render (Backend)
 
+## AI
+
+- Google Gemini API
+
+  
 # 📂 Project Structure
 
 ```
@@ -110,9 +117,9 @@ AI-StudyMate
 
 **Aadil Dar**
 
-GitHub: https://github.com/<Aadildar1>
+GitHub: https://github.com/Aadildar1
 
-87\inkedIn: https://linkedin.com/in/<aadil-majeed-5733523a6>
+LinkedIn: https://linkedin.com/in/aadil-majeed-5733523a6
 
 ---
 
