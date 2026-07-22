@@ -19,6 +19,7 @@ export default function Home() {
   const { getToken } = useAuth();
   
   const [topic, setTopic] = useState("");
+  const [currentTopic, setCurrentTopic] = useState("");
   const [summary, setSummary] = useState("");
   const [videos, setVideos] = useState([]);
   const [quiz, setQuiz] = useState([]);
@@ -53,8 +54,9 @@ export default function Home() {
       return;
     }
 
-    const currentTopic = topic;
+    const enteredTopic = topic;
 
+    setCurrentTopic(enteredTopic);
     setTopic("");
 
     setLoading(true);
@@ -89,7 +91,7 @@ export default function Home() {
           },
 
           body: JSON.stringify({
-            topic: currentTopic,
+            topic: enteredTopic,
           }),
         }
       );
@@ -303,7 +305,7 @@ if (!response.ok) {
     }
 
       setProgressAnalysis(data.analysis);
-
+      console.log("Topic before saving:", topic);
       const saveResponse = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/save-history`,
         {
@@ -315,7 +317,7 @@ if (!response.ok) {
 
           body: JSON.stringify({
             user_id: user?.id,
-            topic: topic,
+           topic: currentTopic,
             original_score: score,
             original_total: quiz.length,
             practice_score: calculatedScore,
