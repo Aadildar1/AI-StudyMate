@@ -1,37 +1,59 @@
-import os
-import json
+from concurrent.futures import ThreadPoolExecutor
 
-from dotenv import load_dotenv
-from google import genai
-from gemini_utils import safe_generate_content
+from fastapi import HTTPException
+
+from gemini_utils import safe_generate_content, parse_json_response
+from youtube_service import search_youtube_videos
 from database import (
     get_cached_learning_content,
     save_learning_content_cache
 )
 
 
-load_dotenv()
+QUIZ_SIZE = 10
 
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+def _clean_quiz(quiz):
+    """Keep only well-formed questions whose answer is one of its options.
+
+    Gemini occasionally returns an answer with different punctuation or
+    casing than the option text; those are repaired by matching loosely.
+    """
+
+    if not isinstance(quiz, list):
+        return []
+
+    cleaned = []
+
+    for item in quiz:
+        if not isinstance(item, dict):
+            continue
+
+        question = str(item.get("question", "")).strip()
+        options = [str(o).strip() for o in item.get("options", []) if str(o).strip()]
+        answer = str(item.get("answer", "")).strip()
+
+        if not question or len(options) != 4 or len(set(options)) != 4:
+            continue
+
+        if answer not in options:
+            # Try a forgiving match (case/punctuation) before giving up.
+            key = answer.lower().rstrip(".")
+            matches = [o for o in options if o.lower().rstrip(".") == key]
+            if len(matches) != 1:
+                continue
+            answer = matches[0]
+
+        cleaned.append({
+            "question": question,
+            "options": options,
+            "answer": answer,
+        })
+
+    return cleaned[:QUIZ_SIZE]
 
 
-def generate_learning_content(topic):
-
-    cached_content = get_cached_learning_content(topic)
-
-    if cached_content is not None:
-        print(
-            f"CACHE HIT: Learning content found for '{topic}'"
-        )
-
-        return cached_content
-
-    print(
-        f"CACHE MISS: Generating AI content for '{topic}'"
-    )
+def _generate_with_gemini(topic):
 
     prompt = f"""
     You are an expert teacher.
@@ -55,7 +77,7 @@ def generate_learning_content(topic):
 
     TASK 2: QUIZ
 
-    Generate exactly 10 multiple choice questions about the topic.
+    Generate exactly {QUIZ_SIZE} multiple choice questions about the topic.
 
     Each question must contain:
     - A question
@@ -88,24 +110,59 @@ def generate_learning_content(topic):
     }}
     """
 
-    response = safe_generate_content(
-        client,
-        "models/gemini-flash-latest",
-        prompt
-    )
+    response = safe_generate_content(prompt, json_output=True)
 
-    content_text = response.text.strip()
+    content = parse_json_response(response)
 
-    learning_content = json.loads(content_text)
+    summary = str(content.get("summary", "")).strip() if isinstance(content, dict) else ""
+    quiz = _clean_quiz(content.get("quiz") if isinstance(content, dict) else None)
 
-    save_learning_content_cache(
-        topic,
-        learning_content["summary"],
-        learning_content["quiz"]
-    )
+    if not summary or len(quiz) < 5:
+        print(f"Gemini returned unusable content: summary={bool(summary)} questions={len(quiz)}")
+        raise HTTPException(
+            status_code=502,
+            detail="The AI could not build a complete lesson for this topic. Please try again."
+        )
 
-    print(
-        f"CACHE SAVED: Learning content stored for '{topic}'"
-    )
+    return summary, quiz
 
-    return learning_content
+
+def generate_learning_content(topic):
+    """Return {summary, quiz, videos} for a topic, using the cache when possible.
+
+    On a cache miss the Gemini call and the YouTube lookup run at the same
+    time, so the student waits for the slower of the two instead of both.
+    """
+
+    cached = get_cached_learning_content(topic)
+
+    if cached is not None:
+        print(f"CACHE HIT: Learning content found for '{topic}'")
+
+        if cached["videos"] is None:
+            # Lesson cached before videos were stored: fetch once and keep.
+            cached["videos"] = search_youtube_videos(topic)
+            save_learning_content_cache(
+                topic, cached["summary"], cached["quiz"], cached["videos"]
+            )
+
+        return cached
+
+    print(f"CACHE MISS: Generating AI content for '{topic}'")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        gemini_future = executor.submit(_generate_with_gemini, topic)
+        videos_future = executor.submit(search_youtube_videos, topic)
+
+        summary, quiz = gemini_future.result()
+        videos = videos_future.result()
+
+    save_learning_content_cache(topic, summary, quiz, videos)
+
+    print(f"CACHE SAVED: Learning content stored for '{topic}'")
+
+    return {
+        "summary": summary,
+        "quiz": quiz,
+        "videos": videos,
+    }

@@ -7,15 +7,14 @@ import {
   SignInButton,
   SignUpButton,
   UserButton,
-  useUser,
   useAuth,
 } from "@clerk/nextjs";
 
 import Link from "next/link";
+import { apiFetch } from "@/lib/api";
 
 export default function Home() {
 
-  const { user } = useUser();
   const { getToken } = useAuth();
   
   const [topic, setTopic] = useState("");
@@ -78,39 +77,19 @@ export default function Home() {
     setProgressLoading(false);
 
     try {
-      const token = await getToken();
-
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/generate`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-
-          body: JSON.stringify({
-            topic: enteredTopic,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-if (!response.ok) {
-    throw new Error(
-        data.detail || data.message || "Backend request failed"
-    );
-}
+      const data = await apiFetch("/generate", {
+        token: await getToken(),
+        method: "POST",
+        body: { topic: enteredTopic },
+      });
 
       setSummary(data.summary);
-      setVideos(data.videos);
-      setQuiz(data.quiz);
+      setVideos(data.videos || []);
+      setQuiz(data.quiz || []);
     } catch (error) {
-  console.error(error);
-  setError(error.message);
-} finally {
+      console.error(error);
+      setError(error.message);
+    } finally {
       setLoading(false);
     }
   };
@@ -120,10 +99,10 @@ if (!response.ok) {
       return;
     }
 
-    setSelectedAnswers({
-      ...selectedAnswers,
+    setSelectedAnswers((previous) => ({
+      ...previous,
       [questionIndex]: option,
-    });
+    }));
   };
 
   const handleQuizSubmit = async () => {
@@ -163,45 +142,23 @@ if (!response.ok) {
     setGeneratedWeakQuiz([]);
 
     try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/feedback`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-          body: JSON.stringify({
-            topic: topic,
-            score: calculatedScore,
-            total: quiz.length,
-            mistakes: studentMistakes,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-if (!response.ok) {
-    throw new Error(
-        data.detail || data.message || "Backend request failed"
-    );
-}
+      const data = await apiFetch("/feedback", {
+        token: await getToken(),
+        method: "POST",
+        body: {
+          topic: currentTopic,
+          score: calculatedScore,
+          total: quiz.length,
+          mistakes: studentMistakes,
+        },
+      });
 
       setFeedback(data.feedback);
 
-      setGeneratedWeakQuiz(
-        data.weak_quiz || []
-      );
+      setGeneratedWeakQuiz(data.weak_quiz || []);
     } catch (error) {
       console.error(error);
-
-      setFeedbackLoading(false);
-
       setError(error.message);
-
-      return;
     } finally {
       setFeedbackLoading(false);
     }
@@ -215,10 +172,10 @@ if (!response.ok) {
       return;
     }
 
-    setWeakAnswers({
-      ...weakAnswers,
+    setWeakAnswers((previous) => ({
+      ...previous,
       [questionIndex]: option,
-    });
+    }));
   };
 
   const handleWeakAreaPractice = () => {
@@ -276,65 +233,37 @@ if (!response.ok) {
     setProgressAnalysis("");
 
     try {
-      const response = await fetch(
-       `${process.env.NEXT_PUBLIC_API_URL}/progress-analysis`,
-        {
-          method: "POST",
+      const token = await getToken();
 
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-         body: JSON.stringify({
-          topic: topic,
+      const data = await apiFetch("/progress-analysis", {
+        token,
+        method: "POST",
+        body: {
+          topic: currentTopic,
           original_score: score,
           original_total: quiz.length,
           practice_score: calculatedScore,
           practice_total: weakQuiz.length,
           original_mistakes: mistakes,
           practice_mistakes: practiceMistakes,
-      }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error("Progress Analysis Error:", data);
-        throw new Error("Progress analysis request failed");
-    }
+        },
+      });
 
       setProgressAnalysis(data.analysis);
-      console.log("Topic before saving:", topic);
-      const saveResponse = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/save-history`,
-        {
-          method: "POST",
 
-          headers: {
-            "Content-Type": "application/json",
-          },
-
-          body: JSON.stringify({
-            user_id: user?.id,
-           topic: currentTopic,
-            original_score: score,
-            original_total: quiz.length,
-            practice_score: calculatedScore,
-            practice_total: weakQuiz.length,
-            progress_analysis: data.analysis,
-        }),
-        }
-      );
-
-      const saveData = await saveResponse.json();
-
-      if (!saveResponse.ok) {
-        throw new Error(
-          saveData.message ||
-            "Unable to save study history"
-        );
-      }
+      // The backend identifies the user from the token, so no user id is sent.
+      await apiFetch("/save-history", {
+        token,
+        method: "POST",
+        body: {
+          topic: currentTopic,
+          original_score: score,
+          original_total: quiz.length,
+          practice_score: calculatedScore,
+          practice_total: weakQuiz.length,
+          progress_analysis: data.analysis,
+        },
+      });
     } catch (error) {
       console.error(error);
       setError(error.message);
@@ -342,54 +271,48 @@ if (!response.ok) {
       setProgressLoading(false);
     }
   };
-const handleChat = async () => {
-  if (chatQuestion.trim() === "") return;
 
-  setChatLoading(true);
+  const handleChat = async () => {
+    const question = chatQuestion.trim();
 
-  try {
-    const response = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/chat`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          topic: topic,
-          question: chatQuestion,
-        }),
-      }
-    );
+    if (question === "") return;
 
-    const data = await response.json();
-
-    setChatMessages((previous) => [
-      ...previous,
-      {
-        role: "user",
-        message: chatQuestion,
-      },
-      {
-        role: "assistant",
-        message: data.answer,
-      },
-    ]);
-
+    setChatLoading(true);
     setChatQuestion("");
 
-  } catch (error) {
     setChatMessages((previous) => [
       ...previous,
-      {
-        role: "assistant",
-        message: "Something went wrong.",
-      },
+      { role: "user", message: question },
     ]);
-  }
 
-  setChatLoading(false);
-};
+    try {
+      const data = await apiFetch("/chat", {
+        token: await getToken(),
+        method: "POST",
+        body: {
+          topic: currentTopic,
+          question,
+        },
+      });
+
+      setChatMessages((previous) => [
+        ...previous,
+        { role: "assistant", message: data.answer },
+      ]);
+    } catch (error) {
+      console.error(error);
+
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          role: "assistant",
+          message: `Sorry, I couldn't answer that. ${error.message}`,
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
 useEffect(() => {
   if (summary && summaryRef.current) {
     summaryRef.current.scrollIntoView({
@@ -728,7 +651,7 @@ useEffect(() => {
                 </h2>
 
                 <p className="text-zinc-400 mt-1">
-                  Test what you've learned before moving to personalized feedback.
+                  Test what you&apos;ve learned before moving to personalized feedback.
                 </p>
               </div>
 
@@ -849,7 +772,7 @@ useEffect(() => {
                   </h3>
 
                   <p className="text-indigo-100 mt-3 text-lg">
-                    Here's how you performed.
+                    Here&apos;s how you performed.
                   </p>
 
                   <div className="mt-8 inline-flex items-center justify-center w-36 h-36 rounded-full border-4 border-white text-5xl font-bold bg-white/10 backdrop-blur">
@@ -905,7 +828,7 @@ useEffect(() => {
                     </h2>
 
                     <p className="text-zinc-400 mt-1">
-                      Here's what you did well and where you can improve.
+                      Here&apos;s what you did well and where you can improve.
                     </p>
                   </div>
 
@@ -1195,36 +1118,56 @@ useEffect(() => {
           </div>
         )}
       <div className="sticky bottom-0 left-0 w-full bg-slate-950/95 backdrop-blur-xl border-t border-slate-800 py-5 mt-16">
-        {error && (
-          <div className="mb-4 bg-red-950 border border-red-700 rounded-2xl p-4">
+        {/* Quiz-stage errors are shown inline next to the relevant section. */}
+        {error && quiz.length === 0 && (
+          <div className="max-w-4xl mx-auto mb-4 bg-red-950 border border-red-700 rounded-2xl p-4">
             {error}
           </div>
         )}
 
-        <div className="max-w-4xl mx-auto bg-zinc-900 border border-zinc-700 rounded-3xl flex items-center gap-3 p-3 shadow-2xl">
-          <input
-            type="text"
-            placeholder="What would you like to learn today?"
-            value={topic}
-            onChange={(e) => setTopic(e.target.value)}
-            className="flex-1 bg-transparent outline-none px-4 text-lg"
-          />
+        <Show when="signed-out">
+          <div className="max-w-4xl mx-auto bg-zinc-900 border border-zinc-700 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4 p-5 shadow-2xl">
+            <p className="text-zinc-300">
+              Sign in to generate lessons, quizzes and track your progress.
+            </p>
 
-          <button
-            onClick={handleSubmit}
-            disabled={loading}
-            className="bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 rounded-2xl px-8 py-3 font-semibold transition disabled:opacity-50"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                ⏳ Generating...
-              </span>
-            ) : (
-              "🚀 Learn"
-            )}
-          </button>
+            <SignInButton>
+              <button className="bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 rounded-2xl px-8 py-3 font-semibold transition">
+                Sign In to Start
+              </button>
+            </SignInButton>
+          </div>
+        </Show>
 
-        </div>
+        <Show when="signed-in">
+          <div className="max-w-4xl mx-auto bg-zinc-900 border border-zinc-700 rounded-3xl flex items-center gap-3 p-3 shadow-2xl">
+            <input
+              type="text"
+              placeholder="What would you like to learn today?"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !loading) handleSubmit();
+              }}
+              className="flex-1 bg-transparent outline-none px-4 text-lg"
+            />
+
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 rounded-2xl px-8 py-3 font-semibold transition disabled:opacity-50"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  ⏳ Generating...
+                </span>
+              ) : (
+                "🚀 Learn"
+              )}
+            </button>
+
+          </div>
+        </Show>
 
       </div>
       </div>

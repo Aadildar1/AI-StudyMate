@@ -1,16 +1,4 @@
-import os
-
-from dotenv import load_dotenv
-from google import genai
 from gemini_utils import safe_generate_content
-
-
-load_dotenv()
-
-
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
 
 
 def generate_progress_analysis(
@@ -64,9 +52,6 @@ def generate_progress_analysis(
     - Keep the analysis under 300 words
     """
 
-    response = safe_generate_content(
-    client,
-    "models/gemini-flash-latest",
-    prompt
-)
+    response = safe_generate_content(prompt)
+
     return response.text

@@ -1,7 +1,8 @@
 "use client";
-import { useUser } from "@clerk/nextjs";
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { apiFetch } from "@/lib/api";
 
 import {
   LineChart,
@@ -16,42 +17,39 @@ import {
 
 export default function Dashboard() {
 
-    const { user } = useUser();
+    const { isLoaded, isSignedIn, getToken } = useAuth();
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
 
- useEffect(() => {
-  if (!user) return;
+  // The middleware redirects signed-out visitors, so this is a fallback.
+  const signedOut = isLoaded && !isSignedIn;
 
-  fetchHistory();
+  useEffect(() => {
+    // Wait until Clerk knows whether there is a session.
+    if (!isLoaded || !isSignedIn) return;
 
-}, [user]);
-const fetchHistory = async () => {
-  if (!user) return;
+    let cancelled = false;
 
-  try {
-    const response = await fetch(
-  `${process.env.NEXT_PUBLIC_API_URL}/history?user_id=${user.id}`
-);
+    (async () => {
+      try {
+        const data = await apiFetch("/history", {
+          token: await getToken(),
+        });
 
-    const data = await response.json();
+        if (!cancelled) setHistory(data.history || []);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
-    console.log("Dashboard Data:", data);
-
-    if (!response.ok) {
-      throw new Error(data.message || "Unable to load study history");
-    }
-
-    setHistory(data.history);
-
-  } catch (error) {
-    console.error(error);
-    setError(error.message);
-  } finally {
-    setLoading(false);
-  }
-};
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, getToken]);
 
   const calculatePercentage = (score, total) => {
     if (total === 0) {
@@ -150,7 +148,22 @@ const recentHistory = [...history].slice(0, 3);
           </Link>
         </div>
 
-        {loading && (
+        {signedOut && (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center">
+            <h2 className="text-3xl font-bold mb-4">🔐 Sign in required</h2>
+            <p className="text-gray-400 mb-8">
+              Sign in to see your study history and progress.
+            </p>
+            <Link
+              href="/sign-in"
+              className="inline-block bg-indigo-600 px-8 py-3 rounded-lg hover:bg-indigo-700"
+            >
+              Sign In
+            </Link>
+          </div>
+        )}
+
+        {!signedOut && loading && (
           <div className="text-center mt-20">
             <p className="text-xl text-cyan-400">
               Loading study history...

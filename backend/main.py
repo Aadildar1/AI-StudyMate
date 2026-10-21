@@ -1,37 +1,30 @@
-import os
-from database import get_learning_library
-from fastapi import Depends
-from auth import get_current_user
-from fastapi import FastAPI, Query
-
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from google import genai
-from youtube_service import search_youtube_videos
+
+load_dotenv()
+
+from auth import get_current_user, CurrentUser, AUTHORIZED_PARTIES
+from gemini_utils import safe_generate_content
 from learning_service import generate_learning_content
 from feedback_quiz_service import generate_feedback_and_weak_quiz
 from progress_service import generate_progress_analysis
 from database import (
     create_database,
     save_study_history,
-    get_study_history
+    get_study_history,
 )
 
-load_dotenv()
 
-
-app = FastAPI()
+app = FastAPI(title="AI StudyMate API")
 
 create_database()
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-    "http://localhost:3000",
-    "https://ai-study-mate-xi.vercel.app",
-],
+    allow_origins=AUTHORIZED_PARTIES,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,12 +33,13 @@ app.add_middleware(
 
 class TopicRequest(BaseModel):
     topic: str
+
+
 class FeedbackRequest(BaseModel):
     topic: str
     score: int
     total: int
     mistakes: list
-
 
 
 class ProgressRequest(BaseModel):
@@ -57,8 +51,8 @@ class ProgressRequest(BaseModel):
     original_mistakes: list
     practice_mistakes: list
 
+
 class StudyHistoryRequest(BaseModel):
-    user_id: str
     topic: str
     original_score: int
     original_total: int
@@ -66,56 +60,72 @@ class StudyHistoryRequest(BaseModel):
     practice_total: int
     progress_analysis: str
 
+
 class ChatRequest(BaseModel):
     topic: str
     question: str
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
-
 
 @app.get("/")
 def home():
+    return {"message": "AI StudyMate Backend is running"}
+
+
+@app.get("/me")
+def me(current_user: CurrentUser = Depends(get_current_user)):
     return {
-        "message": "AI StudyMate Backend is running"
+        "message": "Authentication successful",
+        "user": current_user.to_dict(),
     }
 
 
 @app.post("/generate")
-def generate_content(request: TopicRequest):
+def generate_content(
+    request: TopicRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
 
-    learning_content = generate_learning_content(
-        request.topic
-    )
+    topic = request.topic.strip()
 
-    videos = search_youtube_videos(
-        request.topic
-    )
+    if not topic:
+        raise HTTPException(status_code=422, detail="Please enter a topic.")
+
+    # Summary, quiz and videos come back together; the service runs the
+    # Gemini and YouTube calls in parallel and caches the result per topic.
+    learning_content = generate_learning_content(topic)
 
     return {
-        "topic": request.topic,
+        "topic": topic,
         "summary": learning_content["summary"],
-        "videos": videos,
-        "quiz": learning_content["quiz"]
+        "videos": learning_content["videos"],
+        "quiz": learning_content["quiz"],
     }
+
+
 @app.post("/feedback")
-def get_feedback(request: FeedbackRequest):
+def get_feedback(
+    request: FeedbackRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
 
     content = generate_feedback_and_weak_quiz(
         request.topic,
         request.score,
         request.total,
-        request.mistakes
+        request.mistakes,
     )
 
     return {
-        "feedback": content["feedback"],
-        "weak_quiz": content["weak_quiz"]
+        "feedback": content.get("feedback", ""),
+        "weak_quiz": content.get("weak_quiz", []),
     }
 
+
 @app.post("/progress-analysis")
-def get_progress_analysis(request: ProgressRequest):
+def get_progress_analysis(
+    request: ProgressRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
 
     analysis = generate_progress_analysis(
         request.topic,
@@ -124,51 +134,52 @@ def get_progress_analysis(request: ProgressRequest):
         request.practice_score,
         request.practice_total,
         request.original_mistakes,
-        request.practice_mistakes
+        request.practice_mistakes,
     )
 
-    return {
-        "analysis": analysis
-    }
+    return {"analysis": analysis}
+
+
 @app.post("/save-history")
-def save_history(request: StudyHistoryRequest):
+def save_history(
+    request: StudyHistoryRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
 
+    # The user id comes from the verified token, never from the client.
     save_study_history(
-        request.user_id,
-
+        current_user.id,
         request.topic,
-
         request.original_score,
-
         request.original_total,
-
         request.practice_score,
-
         request.practice_total,
+        request.progress_analysis,
+    )
 
-        request.progress_analysis
-)
+    return {"message": "Study history saved successfully"}
 
-    return {
-        "message": "Study history saved successfully"
-    }
+
 @app.get("/history")
-def get_history(user_id: str = Query(...)):
+def get_history(current_user: CurrentUser = Depends(get_current_user)):
 
-    history = get_study_history(user_id)
+    history = get_study_history(current_user.id)
 
-    return {
-        "history": history
-    }
-@app.get("/me")
-def me(current_user = Depends(get_current_user)):
+    return {"history": history}
 
-    return {
-        "message": "Authentication successful",
-        "user": current_user.to_dict()
-    }
+
+@app.get("/library")
+def learning_library(current_user: CurrentUser = Depends(get_current_user)):
+
+    # The library is the signed-in user's own study history.
+    return {"topics": get_study_history(current_user.id)}
+
+
 @app.post("/chat")
-def chat_with_ai(request: ChatRequest):
+def chat_with_ai(
+    request: ChatRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+):
 
     prompt = f"""
     You are an expert teacher.
@@ -191,20 +202,6 @@ def chat_with_ai(request: ChatRequest):
     - Keep the answer under 300 words.
     """
 
-    response = client.models.generate_content(
-    model="models/gemini-flash-latest",
-    contents=prompt
-)
-    
+    response = safe_generate_content(prompt)
 
-    return {
-        "answer": response.text
-    }
-@app.get("/library")
-def learning_library():
-
-    library = get_learning_library()
-
-    return {
-        "topics": library
-    }
+    return {"answer": response.text}

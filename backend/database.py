@@ -1,72 +1,131 @@
 import os
+import json
+from contextlib import contextmanager
+
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-import json
+from fastapi import HTTPException
 
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set. Add it to backend/.env.")
 
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+
+# A small pool so each request reuses an open connection instead of
+# paying the TLS handshake to Supabase on every query. It is created on
+# first use so the API can still boot (and report a clear error) when the
+# database is temporarily unreachable.
+_connection_pool = None
+
+
+def _get_pool():
+    global _connection_pool
+
+    if _connection_pool is None:
+        _connection_pool = pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=5,
+            dsn=DATABASE_URL,
+        )
+
+    return _connection_pool
+
+
+@contextmanager
+def get_cursor(dict_rows=False):
+    """Borrow a pooled connection, yield a cursor, commit on success.
+
+    The connection is always returned to the pool, even if the query
+    raises, so a failed request can never leak a connection.
+    """
+
+    try:
+        connection_pool = _get_pool()
+        connection = connection_pool.getconn()
+    except psycopg2.OperationalError as error:
+        print(f"Database connection failed: {error}")
+        raise HTTPException(
+            status_code=503,
+            detail="The database is currently unreachable. Please try again shortly."
+        )
+
+    try:
+        cursor_factory = RealDictCursor if dict_rows else None
+        cursor = connection.cursor(cursor_factory=cursor_factory)
+
+        try:
+            yield cursor
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    finally:
+        connection_pool.putconn(connection)
+
 
 def normalize_topic(topic):
-
-    return " ".join(
-        topic.strip().lower().split()
-    )
+    return " ".join(topic.strip().lower().split())
 
 
 def create_database():
+    """Create tables if missing. Logs instead of crashing when the DB is down."""
 
-    connection = get_connection()
+    try:
+        _create_tables()
+    except HTTPException as error:
+        print(f"WARNING: skipping table setup, {error.detail}")
 
-    cursor = connection.cursor()
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS study_history (
-        id SERIAL PRIMARY KEY,
+def _create_tables():
 
-        user_id TEXT NOT NULL,
+    with get_cursor() as cursor:
 
-        topic TEXT NOT NULL,
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS study_history (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            original_score INTEGER NOT NULL,
+            original_total INTEGER NOT NULL,
+            practice_score INTEGER NOT NULL,
+            practice_total INTEGER NOT NULL,
+            progress_analysis TEXT,
+            studied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
 
-        original_score INTEGER NOT NULL,
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS study_history_user_id_idx
+        ON study_history (user_id)
+        """)
 
-        original_total INTEGER NOT NULL,
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS learning_cache (
+            id SERIAL PRIMARY KEY,
+            topic TEXT UNIQUE NOT NULL,
+            summary TEXT NOT NULL,
+            quiz TEXT NOT NULL,
+            videos TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
 
-        practice_score INTEGER NOT NULL,
+        # Older deployments created the table without the videos column.
+        cursor.execute("""
+        ALTER TABLE learning_cache
+        ADD COLUMN IF NOT EXISTS videos TEXT
+        """)
 
-        practice_total INTEGER NOT NULL,
-
-        progress_analysis TEXT,
-
-        studied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS learning_cache (
-        id SERIAL PRIMARY KEY,
-
-        topic TEXT UNIQUE NOT NULL,
-
-        summary TEXT NOT NULL,
-
-        quiz TEXT NOT NULL,
-
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-
-    connection.commit()
-
-    cursor.close()
-    connection.close()
-    print("✅ PostgreSQL tables ready.")
+    print("PostgreSQL tables ready.")
 
 
 def save_study_history(
@@ -79,12 +138,20 @@ def save_study_history(
     progress_analysis
 ):
 
-    connection = get_connection()
+    with get_cursor() as cursor:
 
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        INSERT INTO study_history (
+        cursor.execute("""
+            INSERT INTO study_history (
+                user_id,
+                topic,
+                original_score,
+                original_total,
+                practice_score,
+                practice_total,
+                progress_analysis
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
             user_id,
             topic,
             original_score,
@@ -92,127 +159,75 @@ def save_study_history(
             practice_score,
             practice_total,
             progress_analysis
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (
-        user_id,
-        topic,
-        original_score,
-        original_total,
-        practice_score,
-        practice_total,
-        progress_analysis
-    ))
-
-    connection.commit()
-
-    cursor.close()
-    connection.close()
+        ))
 
 
 def get_study_history(user_id):
+    """Every study session for one user, newest first."""
 
-    connection = get_connection()
+    with get_cursor(dict_rows=True) as cursor:
 
-    cursor = connection.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT
+                id,
+                topic,
+                original_score,
+                original_total,
+                practice_score,
+                practice_total,
+                progress_analysis,
+                studied_at
+            FROM study_history
+            WHERE user_id = %s
+            ORDER BY studied_at DESC
+        """, (user_id,))
 
-    cursor.execute("""
-        SELECT *
-        FROM study_history
-        WHERE user_id = %s
-        ORDER BY studied_at DESC
-    """, (user_id,))
+        return cursor.fetchall()
 
-    history = cursor.fetchall()
 
-    cursor.close()
-    connection.close()
-
-    return history
 def get_cached_learning_content(topic):
 
     normalized_topic = normalize_topic(topic)
 
-    connection = get_connection()
+    with get_cursor(dict_rows=True) as cursor:
 
-    cursor = connection.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT summary, quiz, videos
+            FROM learning_cache
+            WHERE topic = %s
+        """, (normalized_topic,))
 
-    cursor.execute("""
-        SELECT summary, quiz
-        FROM learning_cache
-        WHERE topic = %s
-    """, (normalized_topic,))
-
-    row = cursor.fetchone()
-
-    cursor.close()
-    connection.close()
+        row = cursor.fetchone()
 
     if row is None:
         return None
 
     return {
         "summary": row["summary"],
-        "quiz": json.loads(row["quiz"])
+        "quiz": json.loads(row["quiz"]),
+        # None (not []) when videos were never cached, so the caller can
+        # tell "no videos found" apart from "never looked them up".
+        "videos": json.loads(row["videos"]) if row["videos"] else None,
     }
 
 
-def save_learning_content_cache(
-    topic,
-    summary,
-    quiz
-):
+def save_learning_content_cache(topic, summary, quiz, videos=None):
 
     normalized_topic = normalize_topic(topic)
 
-    quiz_json = json.dumps(quiz)
+    with get_cursor() as cursor:
 
-    connection = get_connection()
-
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        INSERT INTO learning_cache (
-            topic,
+        cursor.execute("""
+            INSERT INTO learning_cache (topic, summary, quiz, videos)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (topic)
+            DO UPDATE SET
+                summary = EXCLUDED.summary,
+                quiz = EXCLUDED.quiz,
+                videos = COALESCE(EXCLUDED.videos, learning_cache.videos)
+        """, (
+            normalized_topic,
             summary,
-            quiz
-        )
-        VALUES (%s, %s, %s)
-        ON CONFLICT (topic)
-        DO UPDATE SET
-            summary = EXCLUDED.summary,
-            quiz = EXCLUDED.quiz
-    """, (
-        normalized_topic,
-        summary,
-        quiz_json
-    ))
-
-    connection.commit()
-
-    cursor.close()
-    connection.close()
-def get_learning_library():
-
-    connection = get_connection()
-
-    cursor = connection.cursor(cursor_factory=RealDictCursor)
-
-    cursor.execute("""
-        SELECT
-            topic,
-            original_score,
-            original_total,
-            practice_score,
-            practice_total,
-            studied_at
-        FROM study_history
-        ORDER BY studied_at DESC
-    """)
-
-    library = cursor.fetchall()
-
-    cursor.close()
-    connection.close()
-
-    return library
+            json.dumps(quiz),
+            json.dumps(videos) if videos is not None else None,
+        ))

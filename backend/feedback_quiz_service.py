@@ -1,17 +1,4 @@
-import os
-import json
-
-from dotenv import load_dotenv
-from google import genai
-from gemini_utils import safe_generate_content
-
-
-load_dotenv()
-
-
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+from gemini_utils import safe_generate_content, parse_json_response
 
 
 def generate_feedback_and_weak_quiz(
@@ -98,23 +85,6 @@ def generate_feedback_and_weak_quiz(
     }}
     """
 
-    response = safe_generate_content(
-        client,
-        "models/gemini-flash-latest",
-        prompt
-    )
+    response = safe_generate_content(prompt, json_output=True)
 
-    content_text = response.text.strip()
-
-    # Remove markdown code fences if present
-    content_text = content_text.replace("```json", "").replace("```", "").strip()
-
-    try:
-        content = json.loads(content_text)
-    except json.JSONDecodeError:
-        print("Invalid JSON returned by Gemini:")
-        print(content_text)
-        raise Exception("Gemini returned invalid JSON. Please try again.")
-
-    return content
-
+    return parse_json_response(response)

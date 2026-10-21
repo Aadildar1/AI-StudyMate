@@ -1,9 +1,12 @@
 "use client";
-
+import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { apiFetch, formatDate } from "@/lib/api";
 
 export default function LearningLibrary() {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -12,32 +15,33 @@ export default function LearningLibrary() {
   const [filter, setFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
 
+  // The middleware redirects signed-out visitors, so this is a fallback.
+  const signedOut = isLoaded && !isSignedIn;
+
   useEffect(() => {
-    fetchLibrary();
-  }, []);
+    if (!isLoaded || !isSignedIn) return;
 
-  async function fetchLibrary() {
-    try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/library`
-      );
+    let cancelled = false;
 
-      const data = await response.json();
+    (async () => {
+      try {
+        const data = await apiFetch("/library", {
+          token: await getToken(),
+        });
 
-      if (!response.ok) {
-        throw new Error(
-          data.message || "Unable to load library"
-        );
+        if (!cancelled) setTopics(data.topics || []);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
+    })();
 
-      setTopics(data.topics || []);
-    } catch (err) {
-      console.error(err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, getToken]);
 
   const percentage = (score, total) => {
     if (!total) return 0;
@@ -114,6 +118,20 @@ export default function LearningLibrary() {
 
     return results;
   }, [topics, search, filter, sortBy]);
+
+  if (signedOut) {
+    return (
+      <main className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white gap-6">
+        <p className="text-2xl">Sign in to see your Learning Library.</p>
+        <Link
+          href="/sign-in"
+          className="bg-indigo-600 px-8 py-3 rounded-lg hover:bg-indigo-700"
+        >
+          Sign In
+        </Link>
+      </main>
+    );
+  }
 
   if (loading) {
     return (
@@ -255,7 +273,7 @@ export default function LearningLibrary() {
               return (
 
                 <div
-                  key={index}
+                  key={topic.id ?? index}
                   className="bg-zinc-900 border border-zinc-800 rounded-3xl p-7 hover:border-violet-500 transition duration-300"
                 >
 
@@ -279,7 +297,7 @@ export default function LearningLibrary() {
                   </div>
 
                   <p className="text-zinc-500 mb-6">
-                    📅 {topic.studied_at}
+                    📅 {formatDate(topic.studied_at)}
                   </p>
 
                   <div className="mb-5">
