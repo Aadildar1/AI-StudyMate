@@ -41,6 +41,18 @@ export async function apiFetch(path, { token, method = "GET", body } = {}) {
   return data;
 }
 
+/** Display name for a saved topic; older sessions may have an empty topic. */
+export function topicLabel(topic) {
+  const text = (topic || "").trim();
+  return text || "Untitled topic";
+}
+
+/** Shorten a label for tight spaces such as chart axes. */
+export function truncate(text, max = 18) {
+  const value = topicLabel(text);
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 export function formatDate(value) {
   if (!value) return "";
 

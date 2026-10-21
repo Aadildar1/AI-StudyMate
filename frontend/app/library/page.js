@@ -2,12 +2,15 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { apiFetch, formatDate } from "@/lib/api";
+import ReactMarkdown from "react-markdown";
+import NavBar from "@/components/NavBar";
+import { apiFetch, formatDate, topicLabel } from "@/lib/api";
 
 export default function LearningLibrary() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
 
   const [topics, setTopics] = useState([]);
+  const [openId, setOpenId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -53,7 +56,7 @@ export default function LearningLibrary() {
 
     if (search.trim()) {
       results = results.filter((topic) =>
-        topic.topic
+        topicLabel(topic.topic)
           .toLowerCase()
           .includes(search.toLowerCase())
       );
@@ -94,7 +97,7 @@ export default function LearningLibrary() {
 
       case "az":
         results.sort((a, b) =>
-          a.topic.localeCompare(b.topic)
+          topicLabel(a.topic).localeCompare(topicLabel(b.topic))
         );
         break;
 
@@ -150,14 +153,15 @@ export default function LearningLibrary() {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white px-6 py-16">
-      <div className="max-w-7xl mx-auto">
+    <main className="min-h-screen bg-zinc-950 text-white px-4 sm:px-6 pt-4 pb-16">
+      <NavBar />
+      <div className="max-w-7xl mx-auto pt-10">
 
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-6 mb-10">
 
           <div>
 
-            <h1 className="text-5xl font-bold">
+            <h1 className="text-4xl sm:text-5xl font-bold">
               📚 Learning Library
             </h1>
 
@@ -279,8 +283,8 @@ export default function LearningLibrary() {
 
                   <div className="flex justify-between items-start mb-5">
 
-                    <h2 className="text-2xl font-bold">
-                      📘 {topic.topic}
+                    <h2 className="text-2xl font-bold break-words min-w-0">
+                      📘 {topicLabel(topic.topic)}
                     </h2>
 
                     <span
@@ -378,7 +382,33 @@ export default function LearningLibrary() {
 
                   </div>
 
-                  
+                  <div className="flex flex-wrap gap-3">
+
+                    <Link
+                      href={`/?topic=${encodeURIComponent(topicLabel(topic.topic))}`}
+                      className="flex-1 text-center bg-indigo-600 hover:bg-indigo-700 px-4 py-3 rounded-xl font-semibold transition whitespace-nowrap"
+                    >
+                      🔁 Study again
+                    </Link>
+
+                    {topic.progress_analysis && (
+                      <button
+                        onClick={() =>
+                          setOpenId(openId === (topic.id ?? index) ? null : (topic.id ?? index))
+                        }
+                        className="flex-1 bg-zinc-800 hover:bg-zinc-700 px-4 py-3 rounded-xl font-semibold transition whitespace-nowrap"
+                      >
+                        {openId === (topic.id ?? index) ? "Hide analysis" : "📈 View analysis"}
+                      </button>
+                    )}
+
+                  </div>
+
+                  {openId === (topic.id ?? index) && topic.progress_analysis && (
+                    <div className="mt-6 border-t border-zinc-800 pt-5 prose prose-invert prose-sm max-w-none prose-headings:text-white prose-p:text-gray-300 prose-li:text-gray-300 prose-strong:text-emerald-300">
+                      <ReactMarkdown>{topic.progress_analysis}</ReactMarkdown>
+                    </div>
+                  )}
 
                 </div>
 

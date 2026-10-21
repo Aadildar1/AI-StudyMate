@@ -146,10 +146,15 @@ def save_history(
     current_user: CurrentUser = Depends(get_current_user),
 ):
 
+    topic = request.topic.strip()
+
+    if not topic:
+        raise HTTPException(status_code=422, detail="A topic is required to save history.")
+
     # The user id comes from the verified token, never from the client.
     save_study_history(
         current_user.id,
-        request.topic,
+        topic,
         request.original_score,
         request.original_total,
         request.practice_score,
@@ -199,7 +204,7 @@ def chat_with_ai(
     - Explain like a teacher.
     - Give examples whenever possible.
     - If appropriate, use analogies.
-    - Keep the answer under 300 words.
+    - Keep the answer under 200 words.
     """
 
     response = safe_generate_content(prompt)

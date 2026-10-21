@@ -2,7 +2,8 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api";
+import NavBar from "@/components/NavBar";
+import { apiFetch, formatDate, topicLabel, truncate } from "@/lib/api";
 
 import {
   LineChart,
@@ -63,7 +64,7 @@ export default function Dashboard() {
 
   const uniqueTopics = new Set(
     history.map((session) =>
-      session.topic.toLowerCase()
+      topicLabel(session.topic).toLowerCase()
     )
   ).size;
 
@@ -111,7 +112,8 @@ const recentHistory = [...history].slice(0, 3);
   .reverse()
   .map((session) => {
     return {
-      topic: session.topic,
+      topic: truncate(session.topic),
+      fullTopic: topicLabel(session.topic),
 
       original: calculatePercentage(
         session.original_score,
@@ -126,12 +128,13 @@ const recentHistory = [...history].slice(0, 3);
   });
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white px-6 py-16">
-      <div className="max-w-6xl mx-auto">
+    <main className="min-h-screen bg-slate-950 text-white px-4 sm:px-6 pt-4 pb-16">
+      <NavBar />
+      <div className="max-w-6xl mx-auto pt-10">
 
-        <div className="flex justify-between items-center mb-12">
+        <div className="flex flex-wrap justify-between items-center gap-4 mb-12">
           <div>
-            <h1 className="text-5xl font-bold text-cyan-400">
+            <h1 className="text-4xl sm:text-5xl font-bold text-cyan-400">
               📊 Progress Dashboard
             </h1>
 
@@ -142,7 +145,7 @@ const recentHistory = [...history].slice(0, 3);
 
           <Link
             href="/"
-            className="bg-indigo-600 px-6 py-3 rounded-lg hover:bg-indigo-700"
+            className="bg-indigo-600 px-6 py-3 rounded-lg hover:bg-indigo-700 whitespace-nowrap"
           >
             ← Back to Learning
           </Link>
@@ -302,6 +305,10 @@ const recentHistory = [...history].slice(0, 3);
                         labelStyle={{
                           color: "#ffffff",
                         }}
+                        labelFormatter={(label, payload) =>
+                          payload?.[0]?.payload?.fullTopic ?? label
+                        }
+                        formatter={(value) => [`${value}%`]}
                       />
 
                       <Legend />
@@ -331,6 +338,59 @@ const recentHistory = [...history].slice(0, 3);
                 </div>
 
               </div>
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 mb-10">
+
+                  <h2 className="text-3xl font-bold text-cyan-400 mb-2">
+                    🕒 Recent Sessions
+                  </h2>
+
+                  <p className="text-gray-400 mb-6">
+                    Your latest study sessions. Open one to study the topic again.
+                  </p>
+
+                  <div className="space-y-3">
+                    {recentHistory.map((session) => {
+                      const original = calculatePercentage(session.original_score, session.original_total);
+                      const practice = calculatePercentage(session.practice_score, session.practice_total);
+                      const change = practice - original;
+
+                      return (
+                        <div
+                          key={session.id ?? `${session.topic}-${session.studied_at}`}
+                          className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-5 py-4"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-semibold text-white truncate">
+                              {topicLabel(session.topic)}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {formatDate(session.studied_at)} · Quiz {original}% · Practice {practice}%
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                                change >= 0 ? "bg-green-900 text-green-300" : "bg-red-900 text-red-300"
+                              }`}
+                            >
+                              {change >= 0 ? "+" : ""}{change}%
+                            </span>
+
+                            <Link
+                              href={`/?topic=${encodeURIComponent(topicLabel(session.topic))}`}
+                              className="text-sm bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg whitespace-nowrap"
+                            >
+                              Study again
+                            </Link>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                </div>
+
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-8">
 
                     <h2 className="text-3xl font-bold text-green-400 mb-6">

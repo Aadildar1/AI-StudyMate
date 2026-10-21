@@ -16,6 +16,7 @@ clerk = Clerk(
 # Extra origins can be added with a comma-separated AUTHORIZED_PARTIES env var.
 AUTHORIZED_PARTIES = [
     "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "https://ai-study-mate-xi.vercel.app",
 ] + [
     origin.strip()

@@ -2,21 +2,50 @@
 
 import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
-import {
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-  useAuth,
-} from "@clerk/nextjs";
+import { Show, SignInButton, useAuth } from "@clerk/nextjs";
 
-import Link from "next/link";
+import NavBar from "@/components/NavBar";
 import { apiFetch } from "@/lib/api";
+
+/** Seconds elapsed while `active` is true; resets when it turns false. */
+function useElapsedSeconds(active) {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const started = Date.now();
+    const id = setInterval(
+      () => setSeconds(Math.round((Date.now() - started) / 1000)),
+      1000
+    );
+    return () => {
+      clearInterval(id);
+      setSeconds(0);
+    };
+  }, [active]);
+
+  return seconds;
+}
+
+/** Loading card with a reassuring note once the AI is taking a while. */
+function LoadingCard({ seconds, message, color }) {
+  return (
+    <div className="mt-10 bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
+      <p className={`text-xl ${color}`}>{message}</p>
+      {seconds >= 8 && (
+        <p className="text-zinc-500 mt-3 text-sm">
+          The AI is busier than usual. This can take up to 30 seconds. ({seconds}s)
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function Home() {
 
-  const { getToken } = useAuth();
-  
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const autoRunRef = useRef(false);
+
   const [topic, setTopic] = useState("");
   const [currentTopic, setCurrentTopic] = useState("");
   const [summary, setSummary] = useState("");
@@ -46,14 +75,20 @@ export default function Home() {
   const feedbackRef = useRef(null);
   const progressRef = useRef(null);
 
-  const handleSubmit = async () => {
-    
-    if (topic.trim() === "") {
+  const lessonSeconds = useElapsedSeconds(loading);
+  const feedbackSeconds = useElapsedSeconds(feedbackLoading);
+  const progressSeconds = useElapsedSeconds(progressLoading);
+
+  const handleSubmit = async (topicOverride) => {
+
+    const enteredTopic = (
+      typeof topicOverride === "string" ? topicOverride : topic
+    ).trim();
+
+    if (enteredTopic === "") {
       setError("Please enter a topic");
       return;
     }
-
-    const enteredTopic = topic;
 
     setCurrentTopic(enteredTopic);
     setTopic("");
@@ -339,76 +374,50 @@ useEffect(() => {
     }, 100);
   }
 }, [progressAnalysis]);
+
+  // "Study again" from the library opens /?topic=...; run it once Clerk is ready.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || autoRunRef.current) return;
+
+    const requested = new URLSearchParams(window.location.search).get("topic");
+
+    if (requested && requested.trim()) {
+      autoRunRef.current = true;
+      window.history.replaceState(null, "", "/");
+      handleSubmit(requested);
+    }
+    // handleSubmit is recreated every render; this only needs to run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, isSignedIn]);
+
   return (
-    <main className="min-h-screen bg-slate-950 text-white px-6 pt-16 pb-40">
-      <nav className="sticky top-0 z-50 w-full bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-800">
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-8 py-4">
-
-          <h1 className="text-2xl font-bold text-white">
-             AI StudyMate
-          </h1>
-
-          <div className="flex items-center gap-4">
-
-            <Link
-              href="/dashboard"
-              className="px-5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition"
-            >
-              📊 Dashboard
-            </Link>
-
-            <Link
-              href="/library"
-              className="px-5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition"
-            >
-              📚 Library
-            </Link>
-
-            <Show when="signed-out">
-              <SignInButton>
-                <button className="px-5 py-2 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700">
-                  Sign In
-                </button>
-              </SignInButton>
-
-              <SignUpButton>
-                <button className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700">
-                  Register
-                </button>
-              </SignUpButton>
-            </Show>
-
-            <Show when="signed-in">
-              <div className="flex items-center gap-3">
-                <span className="text-gray-300 font-medium">
-                  My Account
-                </span>
-
-                <UserButton />
-              </div>
-            </Show>
-
-          </div>
-
-        </div>
-      </nav>
+    <main className="min-h-screen bg-slate-950 text-white px-4 sm:px-6 pt-4 pb-40">
+      <NavBar />
       <div className="max-w-6xl mx-auto pt-6">
-      
-        <div className="min-h-[70vh] flex flex-col justify-center">
+
+        <div className={`${summary || loading ? "min-h-[40vh]" : "min-h-[70vh]"} flex flex-col justify-center`}>
 
           <div className="text-center">
 
-            <h1 className="text-6xl font-bold text-white mb-5">
+            <h1 className="text-4xl sm:text-6xl font-bold text-white mb-5">
               Learn Anything with AI
             </h1>
 
-            <p className="text-zinc-400 text-xl">
+            <p className="text-zinc-400 text-lg sm:text-xl">
               Personalized lessons • AI Tutor • Quizzes • Progress Tracking
             </p>
 
           </div>
 
-</div>
+        </div>
+
+        {loading && (
+          <LoadingCard
+            seconds={lessonSeconds}
+            color="text-violet-300"
+            message={`✨ Building your lesson on "${currentTopic}"...`}
+          />
+        )}
 
         {summary && (
           <section
@@ -423,12 +432,13 @@ useEffect(() => {
               </div>
 
               <div>
-                <h2 className="text-4xl font-bold text-white">
+                <h2 className="text-3xl sm:text-4xl font-bold text-white">
                   AI Summary
                 </h2>
 
                 <p className="text-zinc-400 mt-1">
-                  Understand the topic before diving deeper.
+                  <span className="text-cyan-300 font-medium">{currentTopic}</span>
+                  {" "}· Understand the topic before diving deeper.
                 </p>
               </div>
 
@@ -791,12 +801,11 @@ useEffect(() => {
 
               )}
             {feedbackLoading && (
-              <div className="mt-10 bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
-                <p className="text-xl text-cyan-400">
-                  🤖 AI is analyzing your
-                  performance...
-                </p>
-              </div>
+              <LoadingCard
+                seconds={feedbackSeconds}
+                color="text-cyan-400"
+                message="🤖 AI is analyzing your performance and preparing practice questions..."
+              />
             )}
             {error && !feedback && (
               <div className="mt-8 bg-red-950 border border-red-700 rounded-xl p-6">
@@ -1038,12 +1047,11 @@ useEffect(() => {
                 )}
 
                 {progressLoading && (
-                  <div className="mt-10 bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
-                    <p className="text-xl text-green-400">
-                      📈 AI is analyzing your learning
-                      progress...
-                    </p>
-                  </div>
+                  <LoadingCard
+                    seconds={progressSeconds}
+                    color="text-green-400"
+                    message="📈 AI is analyzing your learning progress..."
+                  />
                 )}
                 {error && !progressAnalysis && (
                     <div className="mt-8 bg-red-950 border border-red-700 rounded-xl p-6">
@@ -1149,17 +1157,17 @@ useEffect(() => {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !loading) handleSubmit();
               }}
-              className="flex-1 bg-transparent outline-none px-4 text-lg"
+              className="flex-1 min-w-0 bg-transparent outline-none px-2 sm:px-4 text-base sm:text-lg"
             />
 
             <button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit()}
               disabled={loading}
-              className="bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 rounded-2xl px-8 py-3 font-semibold transition disabled:opacity-50"
+              className="shrink-0 bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-600 hover:to-indigo-600 rounded-2xl px-4 sm:px-8 py-3 font-semibold transition disabled:opacity-50"
             >
               {loading ? (
-                <span className="flex items-center gap-2">
-                  ⏳ Generating...
+                <span className="flex items-center gap-2 whitespace-nowrap">
+                  ⏳ {lessonSeconds > 0 ? `${lessonSeconds}s` : "Generating..."}
                 </span>
               ) : (
                 "🚀 Learn"

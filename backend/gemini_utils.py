@@ -1,6 +1,7 @@
 import os
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 import httpx
 
@@ -12,14 +13,20 @@ from google.genai.errors import ClientError, ServerError
 
 load_dotenv()
 
-# Primary model and a fallback used when the primary is overloaded or
-# stalls. Both can be overridden from the environment without a deploy.
+# Primary model and a fallback. Both can be overridden from the environment
+# without a deploy.
 MODEL = os.getenv("GEMINI_MODEL", "models/gemini-flash-lite-latest")
 FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "models/gemini-3.5-flash-lite")
 
 # Hard cap per Gemini call so a stalled request fails fast instead of
 # leaving the student staring at a spinner indefinitely.
 REQUEST_TIMEOUT_MS = int(os.getenv("GEMINI_TIMEOUT_MS", "30000"))
+
+# Gemini's latency is spiky: the same prompt answers in 3s one moment and
+# 20s+ or a 504 the next. If the primary model has not answered within this
+# many seconds, a second request is sent to the fallback model and whichever
+# answers first wins ("hedged request"). The loser is simply discarded.
+HEDGE_AFTER_S = float(os.getenv("GEMINI_HEDGE_AFTER_S", "5"))
 
 client = genai.Client(
     api_key=os.getenv("GEMINI_API_KEY"),
@@ -34,57 +41,81 @@ def _models_to_try():
     return models
 
 
-def safe_generate_content(prompt, json_output=False):
-    """Call Gemini, retrying once per model and falling back to a second model.
+def _call(model, prompt, config):
+    return client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config,
+    )
 
-    Transient failures (5xx, deadline exceeded, HTTP timeout) move on to the
-    next attempt; quota errors and bad requests are reported immediately.
+
+def safe_generate_content(prompt, json_output=False):
+    """Call Gemini with a hedged fallback and clear HTTP errors.
+
+    - The primary model is called first.
+    - If it has not answered after HEDGE_AFTER_S seconds, or it fails with a
+      transient error, the fallback model is called too.
+    - The first successful answer is returned; quota and bad-request errors
+      are reported immediately; if every attempt fails, a 503 is raised.
+
     When json_output is True, Gemini is asked to return strict JSON.
     """
 
     config = {"response_mime_type": "application/json"} if json_output else None
 
-    last_error = None
+    models = _models_to_try()
+    started = time.perf_counter()
+    executor = ThreadPoolExecutor(max_workers=len(models))
+    pending = {}          # future -> model name
+    failures = []         # (model, error) for the log line
+    hedged = len(models) == 1
 
-    for model in _models_to_try():
+    try:
+        pending[executor.submit(_call, models[0], prompt, config)] = models[0]
 
-        for attempt in (1, 2):
+        while pending:
+            timeout = None
+            if not hedged:
+                timeout = max(0.0, HEDGE_AFTER_S - (time.perf_counter() - started))
 
-            try:
-                started = time.perf_counter()
+            done, _ = wait(list(pending), timeout=timeout, return_when=FIRST_COMPLETED)
 
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
-                )
+            for future in done:
+                model = pending.pop(future)
 
-                print(f"Gemini {model} answered in {time.perf_counter() - started:.1f}s")
-                return response
+                try:
+                    response = future.result()
+                    elapsed = time.perf_counter() - started
+                    print(f"Gemini {model} answered in {elapsed:.1f}s"
+                          + (" (hedged)" if hedged and model != models[0] else ""))
+                    return response
 
-            except (ServerError, httpx.TimeoutException) as error:
-                last_error = error
-                print(f"Gemini {model} unavailable ({type(error).__name__}), attempt {attempt}/2")
-                if attempt == 1:
-                    time.sleep(1)
+                except ClientError as error:
+                    if error.code == 429:
+                        raise HTTPException(
+                            status_code=429,
+                            detail="AI StudyMate has reached its Gemini API quota. Please try again later."
+                        )
+                    if error.code == 404:
+                        failures.append((model, "model not found"))
+                        continue
+                    raise HTTPException(status_code=500, detail=str(error))
 
-            except ClientError as error:
+                except (ServerError, httpx.TimeoutException) as error:
+                    failures.append((model, type(error).__name__))
 
-                if error.code == 429:
-                    raise HTTPException(
-                        status_code=429,
-                        detail="AI StudyMate has reached its Gemini API quota. Please try again later."
-                    )
+            # Start the fallback once: when the hedge timer fires, or as soon
+            # as the primary has failed.
+            if not hedged:
+                hedged = True
+                reason = "slow" if not failures else failures[-1][1]
+                print(f"Gemini {models[0]} {reason}; hedging with {models[1]}")
+                pending[executor.submit(_call, models[1], prompt, config)] = models[1]
 
-                if error.code == 404:
-                    # Model alias retired: skip straight to the fallback.
-                    last_error = error
-                    print(f"Gemini model {model} not found, trying fallback")
-                    break
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
-                raise HTTPException(status_code=500, detail=str(error))
-
-    print(f"All Gemini attempts failed: {last_error}")
+    print(f"All Gemini attempts failed after {time.perf_counter() - started:.1f}s: {failures}")
 
     raise HTTPException(
         status_code=503,

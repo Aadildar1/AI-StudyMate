@@ -38,7 +38,7 @@ def generate_feedback_and_weak_quiz(
     - Give a short study recommendation
     - Use simple student-friendly language
     - Use Markdown formatting
-    - Keep the feedback under 300 words
+    - Keep the feedback under 220 words
 
 
     TASK 2: WEAK AREA PRACTICE QUIZ

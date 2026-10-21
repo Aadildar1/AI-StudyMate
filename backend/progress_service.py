@@ -49,7 +49,7 @@ def generate_progress_analysis(
     - Give a short next-step study recommendation
     - Use simple student-friendly language
     - Use Markdown headings and bullet points
-    - Keep the analysis under 300 words
+    - Keep the analysis under 220 words
     """
 
     response = safe_generate_content(prompt)
