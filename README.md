@@ -124,7 +124,7 @@ Create `backend/.env`:
 | `CLERK_SECRET_KEY` | Clerk secret key used to verify session tokens |
 | `DATABASE_URL` | PostgreSQL connection string (Supabase) |
 | `GEMINI_MODEL` | Optional primary model (default `models/gemini-flash-lite-latest`) |
-| `GEMINI_FALLBACK_MODEL` | Optional fallback when the primary stalls (default `models/gemini-flash-latest`) |
+| `GEMINI_FALLBACK_MODEL` | Optional fallback when the primary stalls (default `models/gemini-3.5-flash-lite`) |
 | `GEMINI_TIMEOUT_MS` | Optional per-call timeout in milliseconds (default `30000`) |
 | `AUTHORIZED_PARTIES` | Optional extra frontend origins, comma-separated |
 
